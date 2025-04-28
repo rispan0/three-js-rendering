@@ -29,6 +29,30 @@ export class PanoramaViewerComponent implements OnInit, OnDestroy {
       title: 'Mountain View',
       description: 'A breathtaking view of the mountain range at sunset'
     },
+    {
+      high: 'assets/panorama-quality/2-high.jpg',
+      tiny: 'assets/panorama-quality/2-tiny.jpg',
+      title: 'Beach Sunset',
+      description: 'Relaxing beach view with golden sunset colors'
+    },
+    {
+      high: 'assets/panorama-quality/3-high.jpg',
+      tiny: 'assets/panorama-quality/3-tiny.jpg',
+      title: 'City Skyline',
+      description: 'Modern city architecture against the night sky'
+    },
+    {
+      high: 'assets/panorama-quality/4-high.jpg',
+      tiny: 'assets/panorama-quality/4-tiny.jpg',
+      title: 'Forest Path',
+      description: 'Serene forest trail surrounded by ancient trees'
+    },
+    {
+      high: 'assets/panorama-quality/6-high.jpg',
+      tiny: 'assets/panorama-quality/6-tiny.jpg',
+      title: 'Ocean Waves',
+      description: 'Powerful waves crashing against rocky cliffs'
+    },
   ];
 
   // Track loading status
