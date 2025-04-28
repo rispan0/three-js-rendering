@@ -549,6 +549,76 @@ export class PanoramaService implements OnInit {
     return window.innerWidth >= 768; // You can adjust this breakpoint as needed
   }
 
+  /**
+   * Compresses an image to a lower quality and size
+   * @param base64Image The base64 image string to compress
+   * @param maxWidth Maximum width of the compressed image
+   * @param maxHeight Maximum height of the compressed image
+   * @param quality JPEG quality (0-1)
+   * @returns Promise with the compressed base64 image
+   */
+  private compressImage(
+    base64Image: string,
+    maxWidth: number = 800,
+    maxHeight: number = 600,
+    quality: number = 0.3
+  ): Promise<string> {
+    return new Promise((resolve) => {
+      if (!isPlatformBrowser(this.platformId)) {
+        resolve(base64Image);
+        return;
+      }
+
+      this.ngZone.runOutsideAngular(() => {
+        const img = new Image();
+        img.onload = () => {
+          // Calculate new dimensions while maintaining aspect ratio
+          let width = img.width;
+          let height = img.height;
+
+          if (width > maxWidth) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          }
+
+          if (height > maxHeight) {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+
+          // Create canvas and draw resized image
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(base64Image);
+            return;
+          }
+
+          // Use lower quality rendering for better compression
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'low';
+
+          // Draw the image
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Get compressed image
+          const compressedBase64 = canvas.toDataURL('image/jpeg', quality);
+          resolve(compressedBase64);
+        };
+
+        img.onerror = () => {
+          console.error('Error loading image for compression');
+          resolve(base64Image);
+        };
+
+        img.src = base64Image;
+      });
+    });
+  }
+
   async takeScreenshot(containerId: string, quality: number = 0.8): Promise<string> {
     if (!isPlatformBrowser(this.platformId)) {
       return '';
@@ -803,12 +873,20 @@ export class PanoramaService implements OnInit {
       this.setLoadingState(panoramaId, true);
 
       try {
-        // Temporarily show renderer and take screenshot with low quality (0.3)
-        const base64Image = await this.takeScreenshot(panoramaId, 0.3);
+        // Take screenshot with medium quality first
+        const base64Image = await this.takeScreenshot(panoramaId, 0.6);
 
-        // Update static image with screenshot
+        // Compress the image to a lower quality and size
+        const compressedImage = await this.compressImage(
+          base64Image,
+          800,  // max width
+          600,  // max height
+          0.2   // very low quality for static images
+        );
+
+        // Update static image with compressed screenshot
         staticImage.style.opacity = '0';
-        staticImage.src = base64Image;
+        staticImage.src = compressedImage;
         staticImage.style.display = 'block';
         setTimeout(() => {
           if (staticImage) {
