@@ -32,6 +32,7 @@ export class PanoramaService implements OnInit {
   private centerThreshold = 0.8; // How much of the element needs to be visible to be considered "centered"
   private isVisible: Map<string, boolean> = new Map(); // New Map to track visibility state
   private canvasElements: Map<string, HTMLCanvasElement> = new Map(); // New Map to track canvas elements
+  private virtualScrollObserver: IntersectionObserver | null = null;
 
   constructor(
     private ngZone: NgZone,
@@ -69,6 +70,63 @@ export class PanoramaService implements OnInit {
     this.loadingStates.get(containerId)!.next(isLoading);
   }
 
+  private setupVirtualScrollObserver(): void {
+    if (!isPlatformBrowser(this.platformId)) {
+      return;
+    }
+
+    // Create a new Intersection Observer for virtual scroll visibility
+    this.virtualScrollObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach(entry => {
+          const containerId = entry.target.id;
+
+          // When a panorama comes into view
+          if (entry.isIntersecting) {
+            console.log(`Panorama ${containerId} is visible in virtual scroll`);
+
+            // Load high quality texture if not already loaded
+            const scene = this.scenes.get(containerId);
+            if (scene) {
+              const urls = this.getPanoramaUrls(containerId);
+              if (urls) {
+                this.loadTexture(containerId, urls.high, scene, true);
+              }
+            }
+          }
+        });
+      },
+      {
+        root: null,
+        rootMargin: '50px',
+        threshold: 0.1
+      }
+    );
+  }
+
+  private getPanoramaUrls(containerId: string): PanoramaUrls | null {
+    // Extract index from containerId (e.g., "panorama-container-0" -> 0)
+    const match = containerId.match(/panorama-container-(\d+)/);
+    if (!match) return null;
+
+    const index = parseInt(match[1], 10);
+    const container = document.getElementById(containerId);
+    if (!container) return null;
+
+    // Get the panorama item element
+    const panoramaItem = container.closest('.panorama-item');
+    if (!panoramaItem) return null;
+
+    // Get the static image
+    const staticImage = this.staticImages.get(containerId);
+    if (!staticImage) return null;
+
+    return {
+      high: staticImage.getAttribute('data-high-url') || '',
+      tiny: staticImage.src
+    };
+  }
+
   private createLoadingOverlay(containerId: string): HTMLElement {
     const container = this.containers.get(containerId);
     if (!container) return document.createElement('div');
@@ -85,7 +143,7 @@ export class PanoramaService implements OnInit {
     loadingOverlay.style.fontSize = '14px';
     loadingOverlay.style.zIndex = '1001';
     loadingOverlay.style.textAlign = 'center';
-    this.isVisible.set(containerId, false); // Initialize visibility state
+    this.isVisible.set(containerId, false);
 
     const spinner = document.createElement('div');
     spinner.style.width = '30px';
@@ -121,9 +179,6 @@ export class PanoramaService implements OnInit {
     const loadingOverlay = this.loadingOverlays.get(containerId);
     const container = this.containers.get(containerId);
 
-    // Canvas visibility is now handled in startRendering and stopRendering
-    // This method only handles static image and overlays
-
     if (staticImage) {
       staticImage.style.display = isVisible ? 'none' : 'block';
     }
@@ -140,22 +195,17 @@ export class PanoramaService implements OnInit {
       return;
     }
 
-    // Create a new Intersection Observer to detect when panoramas are centered
     this.centerObserver = new IntersectionObserver(
       (entries) => {
         entries.forEach(entry => {
           const containerId = entry.target.id;
 
-          // Check if the panorama is centered (intersection ratio is above threshold)
           if (entry.isIntersecting && entry.intersectionRatio >= this.centerThreshold) {
             console.log(`Panorama ${containerId} is centered in viewport`);
 
-            // Only activate if it's not already the active panorama
             if (this.activePanoramaId !== containerId) {
-              // Get the container element
               const container = this.containers.get(containerId);
               if (container) {
-                // Simulate a dragstart event to activate the panorama
                 const dragEvent = new DragEvent('dragstart', {
                   bubbles: true,
                   cancelable: true
@@ -167,9 +217,9 @@ export class PanoramaService implements OnInit {
         });
       },
       {
-        root: null, // Use the viewport as the root
+        root: null,
         rootMargin: '0px',
-        threshold: [0, 0.25, 0.5, 0.75, 0.8, 0.9, 1.0] // Multiple thresholds for smoother detection
+        threshold: [0, 0.25, 0.5, 0.75, 0.8, 0.9, 1.0]
       }
     );
   }
@@ -179,42 +229,42 @@ export class PanoramaService implements OnInit {
       return;
     }
 
-    // Add to panorama order
     this.panoramaOrder.push(containerId);
 
     const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js');
 
     this.ngZone.runOutsideAngular(async () => {
-      // Create scene
       const scene = new THREE.Scene();
       this.scenes.set(containerId, scene);
 
-      // Create camera
       const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1100);
       camera.position.set(0, 0, 0.1);
       this.cameras.set(containerId, camera);
 
-      // Get container
       const container = document.getElementById(containerId);
       if (!container) {
         console.error(`Container with id ${containerId} not found`);
         return;
       }
 
-      // Store container reference
       this.containers.set(containerId, container);
 
-      // Initialize center observer if not already done
       if (!this.centerObserver) {
         this.setupCenterObserver();
       }
 
-      // Observe this container for center detection
+      if (!this.virtualScrollObserver) {
+        this.setupVirtualScrollObserver();
+      }
+
       if (this.centerObserver) {
         this.centerObserver.observe(container);
       }
 
-      // Create overlay with initial state
+      if (this.virtualScrollObserver) {
+        this.virtualScrollObserver.observe(container);
+      }
+
       const overlay = document.createElement('div');
       overlay.style.position = 'absolute';
       overlay.style.top = '10px';
@@ -230,7 +280,6 @@ export class PanoramaService implements OnInit {
       container.appendChild(overlay);
       this.overlays.set(containerId, overlay);
 
-      // Create canvas element dynamically
       const canvas = document.createElement('canvas');
       canvas.style.width = '100%';
       canvas.style.height = '100%';
@@ -238,10 +287,8 @@ export class PanoramaService implements OnInit {
       canvas.style.top = '0';
       canvas.style.left = '0';
       canvas.style.zIndex = '1';
-      // Don't append to DOM yet - will be added when active
       this.canvasElements.set(containerId, canvas);
 
-      // Create renderer with the canvas
       const renderer = new THREE.WebGLRenderer({
         canvas: canvas,
         antialias: true
@@ -249,23 +296,18 @@ export class PanoramaService implements OnInit {
       renderer.setSize(container.clientWidth, container.clientHeight);
       this.renderers.set(containerId, renderer);
 
-      // Create controls
       const controls = new OrbitControls(camera, canvas);
       controls.enableZoom = false;
       controls.enablePan = false;
       controls.rotateSpeed = -0.5;
       this.controls.set(containerId, controls);
 
-      // Load initial tiny texture
       await this.loadTexture(containerId, urls.tiny, scene, false);
 
-      // Setup intersection observer for progressive loading
       this.setupIntersectionObserver(containerId, urls, scene);
 
-      // Setup hover handlers
       this.setupHoverHandlers(containerId, scene, camera, renderer, controls);
 
-      // Create static image for all panoramas
       const staticImage = this.staticImages.get(containerId) || document.createElement('img');
       if (!this.staticImages.has(containerId)) {
         staticImage.style.width = '100%';
@@ -279,14 +321,12 @@ export class PanoramaService implements OnInit {
         this.staticImages.set(containerId, staticImage);
       }
 
-      // Set the tiny image
       staticImage.src = urls.tiny;
+      staticImage.setAttribute('data-high-url', urls.high);
 
-      // Initialize visibility state
       this.isVisible.set(containerId, false);
       this.setVisibility(containerId, false);
 
-      // Show overlay with static view message
       overlay.textContent = 'Static view - ' + (this.isDesktop() ? 'Drag to interact' : 'Touch to interact');
       overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
       overlay.style.transition = 'background-color 0.3s ease';
@@ -296,7 +336,6 @@ export class PanoramaService implements OnInit {
         }
       }, 1000);
 
-      // Handle window resize
       const handleResize = () => {
         const width = container.clientWidth;
         const height = container.clientHeight;
@@ -308,9 +347,7 @@ export class PanoramaService implements OnInit {
 
       window.addEventListener('resize', handleResize);
 
-      // If this is the first panorama, make it active and capture next three
       if (this.panoramaOrder.length === 1) {
-        // Activate the first panorama immediately
         this.activatePanorama(containerId);
       }
     });
@@ -839,8 +876,8 @@ export class PanoramaService implements OnInit {
     }
 
     // Get the previous 3 and next 3 panorama IDs
-    const previousThreeIds = this.panoramaOrder.slice(Math.max(0, activeIndex - 3), activeIndex);
-    const nextThreeIds = this.panoramaOrder.slice(activeIndex + 1, activeIndex + 6);
+    const previousThreeIds = this.panoramaOrder.slice(Math.max(0, activeIndex - 1), activeIndex);
+    const nextThreeIds = this.panoramaOrder.slice(activeIndex + 1, activeIndex + 1);
 
     // Combine previous and next panoramas to capture
     const panoramasToCapture = [...previousThreeIds, ...nextThreeIds];
