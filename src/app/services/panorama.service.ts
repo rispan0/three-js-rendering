@@ -20,7 +20,6 @@ export class PanoramaService implements OnInit {
   private currentTextures: Map<string, THREE.Texture> = new Map();
   private animationFrames: Map<string, number> = new Map();
   private isHovered: Map<string, boolean> = new Map();
-  private staticImages: Map<string, HTMLImageElement> = new Map();
   private containers: Map<string, HTMLElement> = new Map();
   private overlays: Map<string, HTMLElement> = new Map();
   private activePanoramaId: string | null = null;
@@ -29,10 +28,9 @@ export class PanoramaService implements OnInit {
   private loadingOverlays: Map<string, HTMLElement> = new Map();
   private loadingStates: Map<string, BehaviorSubject<boolean>> = new Map();
   private centerObserver: IntersectionObserver | null = null;
-  private centerThreshold = 0.8; // How much of the element needs to be visible to be considered "centered"
-  private isVisible: Map<string, boolean> = new Map(); // New Map to track visibility state
-  private canvasElements: Map<string, HTMLCanvasElement> = new Map(); // New Map to track canvas elements
-  private virtualScrollObserver: IntersectionObserver | null = null;
+  private centerThreshold = 0.8;
+  private isVisible: Map<string, boolean> = new Map();
+  private canvasElements: Map<string, HTMLCanvasElement> = new Map();
 
   constructor(
     private ngZone: NgZone,
@@ -70,63 +68,6 @@ export class PanoramaService implements OnInit {
     this.loadingStates.get(containerId)!.next(isLoading);
   }
 
-  private setupVirtualScrollObserver(): void {
-    if (!isPlatformBrowser(this.platformId)) {
-      return;
-    }
-
-    // Create a new Intersection Observer for virtual scroll visibility
-    this.virtualScrollObserver = new IntersectionObserver(
-      (entries) => {
-        entries.forEach(entry => {
-          const containerId = entry.target.id;
-
-          // When a panorama comes into view
-          if (entry.isIntersecting) {
-            console.log(`Panorama ${containerId} is visible in virtual scroll`);
-
-            // Load high quality texture if not already loaded
-            const scene = this.scenes.get(containerId);
-            if (scene) {
-              const urls = this.getPanoramaUrls(containerId);
-              if (urls) {
-                this.loadTexture(containerId, urls.high, scene, true);
-              }
-            }
-          }
-        });
-      },
-      {
-        root: null,
-        rootMargin: '50px',
-        threshold: 0.1
-      }
-    );
-  }
-
-  private getPanoramaUrls(containerId: string): PanoramaUrls | null {
-    // Extract index from containerId (e.g., "panorama-container-0" -> 0)
-    const match = containerId.match(/panorama-container-(\d+)/);
-    if (!match) return null;
-
-    const index = parseInt(match[1], 10);
-    const container = document.getElementById(containerId);
-    if (!container) return null;
-
-    // Get the panorama item element
-    const panoramaItem = container.closest('.panorama-item');
-    if (!panoramaItem) return null;
-
-    // Get the static image
-    const staticImage = this.staticImages.get(containerId);
-    if (!staticImage) return null;
-
-    return {
-      high: staticImage.getAttribute('data-high-url') || '',
-      tiny: staticImage.src
-    };
-  }
-
   private createLoadingOverlay(containerId: string): HTMLElement {
     const container = this.containers.get(containerId);
     if (!container) return document.createElement('div');
@@ -143,7 +84,7 @@ export class PanoramaService implements OnInit {
     loadingOverlay.style.fontSize = '14px';
     loadingOverlay.style.zIndex = '1001';
     loadingOverlay.style.textAlign = 'center';
-    this.isVisible.set(containerId, false);
+    this.isVisible.set(containerId, false); // Initialize visibility state
 
     const spinner = document.createElement('div');
     spinner.style.width = '30px';
@@ -171,22 +112,19 @@ export class PanoramaService implements OnInit {
     return loadingOverlay;
   }
 
-  private setVisibility(containerId: string, isVisible: boolean): void {
-    this.isVisible.set(containerId, isVisible);
-    const canvas = this.canvasElements.get(containerId);
-    const staticImage = this.staticImages.get(containerId);
-    const overlay = this.overlays.get(containerId);
-    const loadingOverlay = this.loadingOverlays.get(containerId);
+  private setVisibility(containerId: string, showRenderer: boolean): void {
     const container = this.containers.get(containerId);
+    if (!container) return;
 
-    if (staticImage) {
-      staticImage.style.display = isVisible ? 'none' : 'block';
+    const renderer = this.renderers.get(containerId);
+    const overlay = this.overlays.get(containerId);
+
+    if (renderer) {
+      renderer.domElement.style.display = 'block';
     }
+
     if (overlay) {
-      overlay.style.display = isVisible ? 'none' : 'block';
-    }
-    if (loadingOverlay) {
-      loadingOverlay.style.display = isVisible ? 'none' : 'block';
+      overlay.style.display = showRenderer ? 'none' : 'block';
     }
   }
 
@@ -195,17 +133,22 @@ export class PanoramaService implements OnInit {
       return;
     }
 
+    // Create a new Intersection Observer to detect when panoramas are centered
     this.centerObserver = new IntersectionObserver(
       (entries) => {
         entries.forEach(entry => {
           const containerId = entry.target.id;
 
+          // Check if the panorama is centered (intersection ratio is above threshold)
           if (entry.isIntersecting && entry.intersectionRatio >= this.centerThreshold) {
             console.log(`Panorama ${containerId} is centered in viewport`);
 
+            // Only activate if it's not already the active panorama
             if (this.activePanoramaId !== containerId) {
+              // Get the container element
               const container = this.containers.get(containerId);
               if (container) {
+                // Simulate a dragstart event to activate the panorama
                 const dragEvent = new DragEvent('dragstart', {
                   bubbles: true,
                   cancelable: true
@@ -217,11 +160,50 @@ export class PanoramaService implements OnInit {
         });
       },
       {
-        root: null,
+        root: null, // Use the viewport as the root
         rootMargin: '0px',
-        threshold: [0, 0.25, 0.5, 0.75, 0.8, 0.9, 1.0]
+        threshold: [0, 0.25, 0.5, 0.75, 0.8, 0.9, 1.0] // Multiple thresholds for smoother detection
       }
     );
+  }
+
+  private async initializePanoramas(): Promise<void> {
+    if (!isPlatformBrowser(this.platformId)) {
+      return;
+    }
+
+    // Get the first 5 panorama IDs
+    const initialPanoramaIds = this.panoramaOrder.slice(0, 5);
+
+    for (const containerId of initialPanoramaIds) {
+      const renderer = this.renderers.get(containerId);
+      const scene = this.scenes.get(containerId);
+      const camera = this.cameras.get(containerId);
+      const canvas = this.canvasElements.get(containerId);
+      const texture = this.currentTextures.get(containerId);
+
+      if (!renderer || !scene || !camera || !canvas || !texture) {
+        console.warn(`Missing components for initializing panorama ${containerId}`);
+        continue;
+      }
+
+      // Only show canvas if we have a valid texture
+      if (texture.image && texture.image.complete) {
+        canvas.style.display = 'block';
+        renderer.render(scene, camera);
+      } else {
+        canvas.style.display = 'none';
+      }
+
+      // Stop any ongoing animation if not active
+      if (containerId !== this.activePanoramaId) {
+        const animationFrame = this.animationFrames.get(containerId);
+        if (animationFrame) {
+          cancelAnimationFrame(animationFrame);
+          this.animationFrames.delete(containerId);
+        }
+      }
+    }
   }
 
   async createPanorama(containerId: string, urls: PanoramaUrls): Promise<void> {
@@ -229,42 +211,42 @@ export class PanoramaService implements OnInit {
       return;
     }
 
+    // Add to panorama order
     this.panoramaOrder.push(containerId);
 
     const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js');
 
     this.ngZone.runOutsideAngular(async () => {
+      // Create scene
       const scene = new THREE.Scene();
       this.scenes.set(containerId, scene);
 
+      // Create camera
       const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1100);
       camera.position.set(0, 0, 0.1);
       this.cameras.set(containerId, camera);
 
+      // Get container
       const container = document.getElementById(containerId);
       if (!container) {
         console.error(`Container with id ${containerId} not found`);
         return;
       }
 
+      // Store container reference
       this.containers.set(containerId, container);
 
+      // Initialize center observer if not already done
       if (!this.centerObserver) {
         this.setupCenterObserver();
       }
 
-      if (!this.virtualScrollObserver) {
-        this.setupVirtualScrollObserver();
-      }
-
+      // Observe this container for center detection
       if (this.centerObserver) {
         this.centerObserver.observe(container);
       }
 
-      if (this.virtualScrollObserver) {
-        this.virtualScrollObserver.observe(container);
-      }
-
+      // Create overlay with initial state
       const overlay = document.createElement('div');
       overlay.style.position = 'absolute';
       overlay.style.top = '10px';
@@ -280,6 +262,7 @@ export class PanoramaService implements OnInit {
       container.appendChild(overlay);
       this.overlays.set(containerId, overlay);
 
+      // Create canvas element dynamically
       const canvas = document.createElement('canvas');
       canvas.style.width = '100%';
       canvas.style.height = '100%';
@@ -287,8 +270,11 @@ export class PanoramaService implements OnInit {
       canvas.style.top = '0';
       canvas.style.left = '0';
       canvas.style.zIndex = '1';
+      // canvas.style.display = 'none'; // Initially hidden
+      container.appendChild(canvas);
       this.canvasElements.set(containerId, canvas);
 
+      // Create renderer with the canvas
       const renderer = new THREE.WebGLRenderer({
         canvas: canvas,
         antialias: true
@@ -296,59 +282,29 @@ export class PanoramaService implements OnInit {
       renderer.setSize(container.clientWidth, container.clientHeight);
       this.renderers.set(containerId, renderer);
 
+      // Create controls
       const controls = new OrbitControls(camera, canvas);
       controls.enableZoom = false;
       controls.enablePan = false;
       controls.rotateSpeed = -0.5;
       this.controls.set(containerId, controls);
 
+      // Load initial tiny texture
       await this.loadTexture(containerId, urls.tiny, scene, false);
 
+      // Setup intersection observer for progressive loading
       this.setupIntersectionObserver(containerId, urls, scene);
 
+      // Setup hover handlers
       this.setupHoverHandlers(containerId, scene, camera, renderer, controls);
 
-      const staticImage = this.staticImages.get(containerId) || document.createElement('img');
-      if (!this.staticImages.has(containerId)) {
-        staticImage.style.width = '100%';
-        staticImage.style.height = '100%';
-        staticImage.style.objectFit = 'cover';
-        staticImage.style.position = 'absolute';
-        staticImage.style.top = '0';
-        staticImage.style.left = '0';
-        staticImage.style.transition = 'opacity 0.3s ease';
-        container.appendChild(staticImage);
-        this.staticImages.set(containerId, staticImage);
-      }
-
-      staticImage.src = urls.tiny;
-      staticImage.setAttribute('data-high-url', urls.high);
-
+      // Initialize visibility state
       this.isVisible.set(containerId, false);
       this.setVisibility(containerId, false);
 
-      overlay.textContent = 'Static view - ' + (this.isDesktop() ? 'Drag to interact' : 'Touch to interact');
-      overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
-      overlay.style.transition = 'background-color 0.3s ease';
-      setTimeout(() => {
-        if (overlay) {
-          overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-        }
-      }, 1000);
-
-      const handleResize = () => {
-        const width = container.clientWidth;
-        const height = container.clientHeight;
-
-        camera.aspect = width / height;
-        camera.updateProjectionMatrix();
-        renderer.setSize(width, height);
-      };
-
-      window.addEventListener('resize', handleResize);
-
-      if (this.panoramaOrder.length === 1) {
-        this.activatePanorama(containerId);
+      // After creating the panorama, check if we should initialize the first 5 panoramas
+      if (this.panoramaOrder.length === 5) {
+        await this.initializePanoramas();
       }
     });
   }
@@ -423,30 +379,17 @@ export class PanoramaService implements OnInit {
         const otherContainer = this.containers.get(this.activePanoramaId);
         if (otherContainer) {
           const otherRenderer = this.renderers.get(this.activePanoramaId);
-          const otherStaticImage = this.staticImages.get(this.activePanoramaId);
           const otherOverlay = this.overlays.get(this.activePanoramaId);
 
           // Stop animation for other panorama
-          const otherAnimationFrame = this.animationFrames.get(this.activePanoramaId);
-          if (otherAnimationFrame) {
-            cancelAnimationFrame(otherAnimationFrame);
-            this.animationFrames.delete(this.activePanoramaId);
-          }
+          this.stopRendering(this.activePanoramaId);
 
-          // Take screenshot of the other panorama before deactivating
-          const base64Image = await this.takeScreenshot(this.activePanoramaId);
-
-          // Hide other panorama's renderer and show static image
+          // Hide other panorama's renderer
           this.setVisibility(this.activePanoramaId, false);
-
-          // Update other panorama's static image
-          if (otherStaticImage) {
-            otherStaticImage.src = base64Image;
-          }
 
           // Show other panorama's overlay with replacement message
           if (otherOverlay) {
-            otherOverlay.textContent = 'Static view - ' + (this.isDesktop() ? 'Drag to interact' : 'Touch to interact');
+            otherOverlay.textContent = this.isDesktop() ? 'Drag to interact' : 'Touch to interact';
             otherOverlay.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
             otherOverlay.style.transition = 'background-color 0.3s ease';
             setTimeout(() => {
@@ -462,10 +405,10 @@ export class PanoramaService implements OnInit {
       this.activePanoramaId = containerId;
       this.isHovered.set(containerId, true);
 
-      // Show renderer and hide static image/overlay
+      // Show renderer and hide overlay
       this.setVisibility(containerId, true);
 
-      // Add canvas to DOM - FIXED: Ensure canvas is properly added
+      // Add canvas to DOM
       const canvas = this.canvasElements.get(containerId);
       if (canvas) {
         console.log(`Adding canvas for panorama ${containerId} to DOM`);
@@ -480,24 +423,7 @@ export class PanoramaService implements OnInit {
       }
 
       // Start rendering immediately
-      const animate = () => {
-        if (!this.isHovered.get(containerId)) {
-          this.animationFrames.delete(containerId);
-          return;
-        }
-        this.animationFrames.set(
-          containerId,
-          requestAnimationFrame(animate)
-        );
-        controls.update();
-        renderer.render(scene, camera);
-      };
-      animate();
-
-      // Only capture next three if this panorama hasn't been captured yet
-      if (!this.capturedPanoramas.has(containerId)) {
-        await this.captureNextThreeScreenshots();
-      }
+      this.startRendering(containerId);
     };
 
     const stopRendering = async () => {
@@ -509,49 +435,19 @@ export class PanoramaService implements OnInit {
         this.activePanoramaId = null;
       }
 
-      // Stop animation
-      const animationFrame = this.animationFrames.get(containerId);
-      if (animationFrame) {
-        cancelAnimationFrame(animationFrame);
-        this.animationFrames.delete(containerId);
-      }
+      // Only stop rendering if panorama is not centered
+      if (!this.isPanoramaCentered(containerId)) {
+        this.stopRendering(containerId);
+        // Hide renderer and show overlay
+        this.setVisibility(containerId, false);
 
-      // Take screenshot
-      const base64Image = await this.takeScreenshot(containerId);
-
-      // Hide renderer and show static image/overlay
-      this.setVisibility(containerId, false);
-
-      // Remove canvas from DOM - FIXED: Ensure canvas is properly removed
-      const canvas = this.canvasElements.get(containerId);
-      if (canvas && canvas.parentNode) {
-        console.log(`Removing canvas for panorama ${containerId} from DOM`);
-        canvas.parentNode.removeChild(canvas);
-      }
-
-      // Create or update static image
-      let staticImage = this.staticImages.get(containerId);
-      if (!staticImage) {
-        staticImage = document.createElement('img');
-        staticImage.style.width = '100%';
-        staticImage.style.height = '100%';
-        staticImage.style.objectFit = 'cover';
-        staticImage.style.position = 'absolute';
-        staticImage.style.top = '0';
-        staticImage.style.left = '0';
-        staticImage.style.transition = 'opacity 0.3s ease';
-        container.appendChild(staticImage);
-        this.staticImages.set(containerId, staticImage);
-      }
-
-      // Fade in the static image
-      staticImage.style.opacity = '0';
-      staticImage.src = base64Image;
-      setTimeout(() => {
-        if (staticImage) {
-          staticImage.style.opacity = '1';
+        // Remove canvas from DOM
+        const canvas = this.canvasElements.get(containerId);
+        if (canvas && canvas.parentNode) {
+          console.log(`Removing canvas for panorama ${containerId} from DOM`);
+          canvas.parentNode.removeChild(canvas);
         }
-      }, 50);
+      }
     };
 
     // Check if we're on desktop
@@ -675,23 +571,20 @@ export class PanoramaService implements OnInit {
           return;
         }
 
-        // Add canvas to DOM if it's not already there
+        // Ensure canvas is in the DOM and visible
         if (!canvas.parentNode) {
-          console.log(`Adding canvas for screenshot of panorama ${containerId}`);
           container.appendChild(canvas);
         }
+        canvas.style.display = 'block';
 
         // Force one render
         renderer.render(scene, camera);
 
         // Get the base64 image with specified quality
-        const base64 = renderer.domElement.toDataURL('image/jpeg', quality);
+        const base64 = canvas.toDataURL('image/jpeg', quality);
 
-        // Remove canvas from DOM after taking screenshot
-        if (canvas.parentNode) {
-          console.log(`Removing canvas after screenshot of panorama ${containerId}`);
-          canvas.parentNode.removeChild(canvas);
-        }
+        // Hide canvas after taking screenshot
+        // canvas.style.display = 'none';
 
         resolve(base64);
       });
@@ -727,6 +620,19 @@ export class PanoramaService implements OnInit {
           }
 
           this.currentTextures.set(containerId, texture);
+
+          // Show canvas only after texture is loaded
+          const canvas = this.canvasElements.get(containerId);
+          if (canvas) {
+            canvas.style.display = 'block';
+            const renderer = this.renderers.get(containerId);
+            const scene = this.scenes.get(containerId);
+            const camera = this.cameras.get(containerId);
+            if (renderer && scene && camera) {
+              renderer.render(scene, camera);
+            }
+          }
+
           resolve();
         },
         (xhr) => {
@@ -817,13 +723,6 @@ export class PanoramaService implements OnInit {
         this.currentTextures.delete(containerId);
       }
 
-      // Cleanup static image
-      const staticImage = this.staticImages.get(containerId);
-      if (staticImage) {
-        staticImage.remove();
-        this.staticImages.delete(containerId);
-      }
-
       // Cleanup overlay
       const overlay = this.overlays.get(containerId);
       if (overlay) {
@@ -876,8 +775,8 @@ export class PanoramaService implements OnInit {
     }
 
     // Get the previous 3 and next 3 panorama IDs
-    const previousThreeIds = this.panoramaOrder.slice(Math.max(0, activeIndex - 1), activeIndex);
-    const nextThreeIds = this.panoramaOrder.slice(activeIndex + 1, activeIndex + 1);
+    const previousThreeIds = this.panoramaOrder.slice(Math.max(0, activeIndex - 3), activeIndex);
+    const nextThreeIds = this.panoramaOrder.slice(activeIndex + 1, activeIndex + 6);
 
     // Combine previous and next panoramas to capture
     const panoramasToCapture = [...previousThreeIds, ...nextThreeIds];
@@ -892,10 +791,9 @@ export class PanoramaService implements OnInit {
       const renderer = this.renderers.get(panoramaId);
       const scene = this.scenes.get(panoramaId);
       const camera = this.cameras.get(panoramaId);
-      const staticImage = this.staticImages.get(panoramaId);
       const overlay = this.overlays.get(panoramaId);
 
-      if (!renderer || !scene || !camera || !staticImage || !overlay) {
+      if (!renderer || !scene || !camera || !overlay) {
         console.warn(`Missing components for panorama ${panoramaId}`);
         continue;
       }
@@ -920,16 +818,6 @@ export class PanoramaService implements OnInit {
           600,  // max height
           0.2   // very low quality for static images
         );
-
-        // Update static image with compressed screenshot
-        staticImage.style.opacity = '0';
-        staticImage.src = compressedImage;
-        staticImage.style.display = 'block';
-        setTimeout(() => {
-          if (staticImage) {
-            staticImage.style.opacity = '1';
-          }
-        }, 50);
 
         // Update overlay
         overlay.style.display = 'block';
@@ -1039,5 +927,39 @@ export class PanoramaService implements OnInit {
       renderer.render(scene, camera);
     };
     animate();
+  }
+
+  private startRendering(containerId: string): void {
+    const renderer = this.renderers.get(containerId);
+    const scene = this.scenes.get(containerId);
+    const camera = this.cameras.get(containerId);
+    const controls = this.controls.get(containerId);
+
+    if (!renderer || !scene || !camera || !controls) {
+      return;
+    }
+
+    const animate = () => {
+      // Only continue animation if panorama is hovered or centered
+      if (!this.isHovered.get(containerId) && !this.isPanoramaCentered(containerId)) {
+        this.animationFrames.delete(containerId);
+        return;
+      }
+      this.animationFrames.set(
+        containerId,
+        requestAnimationFrame(animate)
+      );
+      controls.update();
+      renderer.render(scene, camera);
+    };
+    animate();
+  }
+
+  private stopRendering(containerId: string): void {
+    const animationFrame = this.animationFrames.get(containerId);
+    if (animationFrame) {
+      cancelAnimationFrame(animationFrame);
+      this.animationFrames.delete(containerId);
+    }
   }
 }

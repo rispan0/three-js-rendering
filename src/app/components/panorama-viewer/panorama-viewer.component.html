@@ -1,30 +1,23 @@
 <div class="panorama-grid">
-    <div *ngIf="!areAllVisibleItemsRendered()" class="global-loading-overlay">
-        <div class="spinner"></div>
-        <p>Rendering visible panoramas...</p>
-    </div>
-    <cdk-virtual-scroll-viewport itemSize="420" class="viewport">
-        <div *cdkVirtualFor="let panorama of panoramaUrls; let i = index" class="panorama-item">
-            <div [id]="'panorama-container-' + i" class="panorama-container"
-                (cdkObserveContent)="onPanoramaVisibilityChange(i, true)">
-                <!-- Canvas elements will be created dynamically by the PanoramaService -->
-                <div *ngIf="loadingStatus['panorama-container-' + i]" class="loading-overlay">
-                    <div class="spinner"></div>
-                    <p>Loading panorama...</p>
-                </div>
-                <div *ngIf="errorStatus['panorama-container-' + i]" class="error-overlay">
-                    <p>Error loading panorama</p>
-                    <p class="error-details">Please check the console for details</p>
-                </div>
-                <div *ngIf="captureLoadingStatus['panorama-container-' + i]" class="capture-loading-overlay">
-                    <div class="spinner"></div>
-                    <p>Capturing panorama...</p>
-                </div>
+    <div *ngFor="let panorama of panoramaUrls; let i = index" class="panorama-item">
+        <div [id]="'panorama-container-' + i" class="panorama-container">
+            <!-- Canvas elements will be created dynamically by the PanoramaService -->
+            <div *ngIf="loadingStatus['panorama-container-' + i]" class="loading-overlay">
+                <div class="spinner"></div>
+                <p>Loading panorama...</p>
             </div>
-            <div class="panorama-info">
-                <h3 class="panorama-title">{{ panorama.title }}</h3>
-                <p class="panorama-description">{{ panorama.description }}</p>
+            <div *ngIf="errorStatus['panorama-container-' + i]" class="error-overlay">
+                <p>Error loading panorama</p>
+                <p class="error-details">Please check the console for details</p>
+            </div>
+            <div *ngIf="captureLoadingStatus['panorama-container-' + i]" class="capture-loading-overlay">
+                <div class="spinner"></div>
+                <p>Capturing panorama...</p>
             </div>
         </div>
-    </cdk-virtual-scroll-viewport>
+        <div class="panorama-info">
+            <h3 class="panorama-title">{{ panorama.title }}</h3>
+            <p class="panorama-description">{{ panorama.description }}</p>
+        </div>
+    </div>
 </div>
